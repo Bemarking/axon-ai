@@ -1,0 +1,32 @@
+{
+  "_meta": {
+    "source": "contract_analyzer.axon",
+    "backend": "anthropic"
+  },
+  "events": [
+    {
+      "type": "step_start",
+      "data": {
+        "step_name": "Extract"
+      }
+    },
+    {
+      "type": "model_call",
+      "data": {
+        "message": "Extracting entities..."
+      }
+    },
+    {
+      "type": "anchor_pass",
+      "data": {
+        "name": "NoHallucination"
+      }
+    },
+    {
+      "type": "step_end",
+      "data": {
+        "step_name": "Extract"
+      }
+    }
+  ]
+}

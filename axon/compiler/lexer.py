@@ -1,0 +1,342 @@
+"""
+AXON Compiler — Lexer
+======================
+Hand-written, single-pass character scanner.
+
+Source (.axon text) → list[Token]
+
+Features:
+  - Keyword vs identifier discrimination via lookup table
+  - String literals with escape sequences
+  - Integer / Float / Duration literals
+  - Arrow (->) and range (..) as single tokens
+  - Comment stripping (// and /* */)
+  - Line/column tracking for error messages
+"""
+
+from __future__ import annotations
+
+from .errors import AxonLexerError
+from .tokens import KEYWORDS, Token, TokenType
+
+
+class Lexer:
+    """Tokenizes AXON source code into a stream of Token objects."""
+
+    def __init__(self, source: str, filename: str = "<stdin>"):
+        self._source = source
+        self._filename = filename
+        self._pos = 0
+        self._line = 1
+        self._column = 1
+        self._tokens: list[Token] = []
+
+    # ── public API ────────────────────────────────────────────────
+
+    def tokenize(self) -> list[Token]:
+        """Scan the entire source and return all tokens (excluding comments)."""
+        while not self._at_end():
+            self._skip_whitespace()
+            if self._at_end():
+                break
+            self._scan_token()
+        self._tokens.append(Token(TokenType.EOF, "", self._line, self._column))
+        return self._tokens
+
+    # ── character helpers ─────────────────────────────────────────
+
+    def _at_end(self) -> bool:
+        return self._pos >= len(self._source)
+
+    def _peek(self) -> str:
+        if self._at_end():
+            return "\0"
+        return self._source[self._pos]
+
+    def _peek_next(self) -> str:
+        if self._pos + 1 >= len(self._source):
+            return "\0"
+        return self._source[self._pos + 1]
+
+    def _advance(self) -> str:
+        ch = self._source[self._pos]
+        self._pos += 1
+        if ch == "\n":
+            self._line += 1
+            self._column = 1
+        else:
+            self._column += 1
+        return ch
+
+    def _match(self, expected: str) -> bool:
+        """Advance if the current char matches expected."""
+        if self._at_end() or self._source[self._pos] != expected:
+            return False
+        self._advance()
+        return True
+
+    # ── whitespace & comments ─────────────────────────────────────
+
+    def _skip_whitespace(self) -> None:
+        while not self._at_end():
+            ch = self._peek()
+            if ch in (" ", "\t", "\r", "\n"):
+                self._advance()
+            elif ch == "/" and self._peek_next() == "/":
+                self._skip_line_comment()
+            elif ch == "/" and self._peek_next() == "*":
+                self._skip_block_comment()
+            else:
+                break
+
+    def _skip_line_comment(self) -> None:
+        # consume //
+        self._advance()
+        self._advance()
+        while not self._at_end() and self._peek() != "\n":
+            self._advance()
+
+    def _skip_block_comment(self) -> None:
+        start_line = self._line
+        start_col = self._column
+        # consume /*
+        self._advance()
+        self._advance()
+        while not self._at_end():
+            if self._peek() == "*" and self._peek_next() == "/":
+                self._advance()  # *
+                self._advance()  # /
+                return
+            self._advance()
+        raise AxonLexerError(
+            "Unterminated block comment",
+            line=start_line,
+            column=start_col,
+        )
+
+    # ── main scanner dispatch ─────────────────────────────────────
+
+    def _scan_token(self) -> None:
+        line = self._line
+        col = self._column
+        ch = self._advance()
+
+        match ch:
+            # single-character symbols
+            case "{":
+                self._emit(TokenType.LBRACE, "{", line, col)
+            case "}":
+                self._emit(TokenType.RBRACE, "}", line, col)
+            case "(":
+                self._emit(TokenType.LPAREN, "(", line, col)
+            case ")":
+                self._emit(TokenType.RPAREN, ")", line, col)
+            case "[":
+                self._emit(TokenType.LBRACKET, "[", line, col)
+            case "]":
+                self._emit(TokenType.RBRACKET, "]", line, col)
+            case ":":
+                self._emit(TokenType.COLON, ":", line, col)
+            case ",":
+                self._emit(TokenType.COMMA, ",", line, col)
+            case "?":
+                self._emit(TokenType.QUESTION, "?", line, col)
+
+            # dot or dotdot (..)
+            case ".":
+                if self._match("."):
+                    self._emit(TokenType.DOTDOT, "..", line, col)
+                else:
+                    self._emit(TokenType.DOT, ".", line, col)
+
+            # arrow (->) or minus (currently just arrow)
+            case "-":
+                if self._match(">"):
+                    self._emit(TokenType.ARROW, "->", line, col)
+                else:
+                    # standalone minus — treat as part of a number if next is digit
+                    if not self._at_end() and self._peek().isdigit():
+                        self._scan_number(line, col, negative=True)
+                    else:
+                        raise AxonLexerError(
+                            f"Unexpected character '-'",
+                            line=line,
+                            column=col,
+                        )
+
+            # comparison operators
+            case "<":
+                if self._match("="):
+                    self._emit(TokenType.LTE, "<=", line, col)
+                else:
+                    self._emit(TokenType.LT, "<", line, col)
+            case ">":
+                if self._match("="):
+                    self._emit(TokenType.GTE, ">=", line, col)
+                else:
+                    self._emit(TokenType.GT, ">", line, col)
+            case "=":
+                if self._match("="):
+                    self._emit(TokenType.EQ, "==", line, col)
+                else:
+                    raise AxonLexerError(
+                        "Unexpected '='. Did you mean '=='?",
+                        line=line,
+                        column=col,
+                    )
+            case "!":
+                if self._match("="):
+                    self._emit(TokenType.NEQ, "!=", line, col)
+                else:
+                    raise AxonLexerError(
+                        "Unexpected '!'. Did you mean '!='?",
+                        line=line,
+                        column=col,
+                    )
+
+            # string literal
+            case '"':
+                self._scan_string(line, col)
+
+            case _:
+                # numbers
+                if ch.isdigit():
+                    self._scan_number(line, col, first_char=ch)
+                # identifiers & keywords
+                elif ch.isalpha() or ch == "_":
+                    self._scan_identifier(line, col, first_char=ch)
+                else:
+                    raise AxonLexerError(
+                        f"Unexpected character {ch!r}",
+                        line=line,
+                        column=col,
+                    )
+
+    # ── literal scanners ──────────────────────────────────────────
+
+    def _scan_string(self, start_line: int, start_col: int) -> None:
+        """Scan a double-quoted string literal with escape support."""
+        chars: list[str] = []
+        while not self._at_end() and self._peek() != '"':
+            if self._peek() == "\n":
+                raise AxonLexerError(
+                    "Unterminated string (newline before closing quote)",
+                    line=start_line,
+                    column=start_col,
+                )
+            if self._peek() == "\\":
+                self._advance()  # consume backslash
+                if self._at_end():
+                    raise AxonLexerError(
+                        "Unterminated escape sequence",
+                        line=self._line,
+                        column=self._column,
+                    )
+                esc = self._advance()
+                match esc:
+                    case "n":
+                        chars.append("\n")
+                    case "t":
+                        chars.append("\t")
+                    case "\\":
+                        chars.append("\\")
+                    case '"':
+                        chars.append('"')
+                    case _:
+                        chars.append(esc)
+            else:
+                chars.append(self._advance())
+
+        if self._at_end():
+            raise AxonLexerError(
+                "Unterminated string",
+                line=start_line,
+                column=start_col,
+            )
+        self._advance()  # consume closing "
+        self._emit(TokenType.STRING, "".join(chars), start_line, start_col)
+
+    def _scan_number(
+        self,
+        start_line: int,
+        start_col: int,
+        first_char: str = "",
+        negative: bool = False,
+    ) -> None:
+        """Scan an integer, float, or duration literal."""
+        digits: list[str] = []
+        if negative:
+            digits.append("-")
+        if first_char:
+            digits.append(first_char)
+
+        # consume integer part
+        while not self._at_end() and self._peek().isdigit():
+            digits.append(self._advance())
+
+        is_float = False
+
+        # check for decimal point (but not range operator ..)
+        if (
+            not self._at_end()
+            and self._peek() == "."
+            and self._peek_next() != "."
+        ):
+            is_float = True
+            digits.append(self._advance())  # consume '.'
+            if self._at_end() or not self._peek().isdigit():
+                raise AxonLexerError(
+                    "Expected digit after decimal point",
+                    line=self._line,
+                    column=self._column,
+                )
+            while not self._at_end() and self._peek().isdigit():
+                digits.append(self._advance())
+
+        raw = "".join(digits)
+
+        # check for duration suffix
+        if not self._at_end() and self._peek().isalpha():
+            suffix_start = self._pos
+            suffix = ""
+            while not self._at_end() and self._peek().isalpha():
+                suffix += self._advance()
+
+            if suffix in ("s", "ms", "m", "h", "d"):
+                self._emit(
+                    TokenType.DURATION, raw + suffix, start_line, start_col
+                )
+                return
+            else:
+                # not a duration — rewind
+                self._pos = suffix_start
+                self._column -= len(suffix)
+
+        if is_float:
+            self._emit(TokenType.FLOAT, raw, start_line, start_col)
+        else:
+            self._emit(TokenType.INTEGER, raw, start_line, start_col)
+
+    def _scan_identifier(
+        self, start_line: int, start_col: int, first_char: str = ""
+    ) -> None:
+        """Scan an identifier or keyword."""
+        chars: list[str] = [first_char]
+
+        while not self._at_end() and (
+            self._peek().isalnum() or self._peek() == "_"
+        ):
+            chars.append(self._advance())
+
+        word = "".join(chars)
+
+        # keyword lookup
+        token_type = KEYWORDS.get(word, TokenType.IDENTIFIER)
+        self._emit(token_type, word, start_line, start_col)
+
+    # ── emit helper ───────────────────────────────────────────────
+
+    def _emit(
+        self, token_type: TokenType, value: str, line: int, col: int
+    ) -> None:
+        self._tokens.append(Token(token_type, value, line, col))

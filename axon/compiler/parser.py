@@ -1,0 +1,1109 @@
+"""
+AXON Compiler — Parser
+========================
+Recursive descent parser: Token stream → Cognitive AST.
+
+One method per EBNF grammar rule. Produces a tree of cognitive nodes
+(PersonaDefinition, FlowDefinition, ReasonChain, …) — no mechanical nodes.
+
+Entry point: Parser(tokens).parse() → ProgramNode
+"""
+
+from __future__ import annotations
+
+from .ast_nodes import (
+    ASTNode,
+    AnchorConstraint,
+    ConditionalNode,
+    ContextDefinition,
+    FlowDefinition,
+    ImportNode,
+    IntentNode,
+    MemoryDefinition,
+    ParameterNode,
+    PersonaDefinition,
+    ProbeDirective,
+    ProgramNode,
+    RangeConstraint,
+    ReasonChain,
+    RecallNode,
+    RefineBlock,
+    RememberNode,
+    RunStatement,
+    StepNode,
+    ToolDefinition,
+    TypeDefinition,
+    TypeExprNode,
+    TypeFieldNode,
+    UseToolNode,
+    ValidateGate,
+    ValidateRule,
+    WeaveNode,
+    WhereClause,
+)
+from .errors import AxonParseError
+from .tokens import Token, TokenType
+
+
+class Parser:
+    """Recursive descent parser for the AXON language."""
+
+    def __init__(self, tokens: list[Token]):
+        self._tokens = tokens
+        self._pos = 0
+
+    # ── public API ────────────────────────────────────────────────
+
+    def parse(self) -> ProgramNode:
+        """Parse the full program → ProgramNode."""
+        program = ProgramNode(line=1, column=1)
+        while not self._check(TokenType.EOF):
+            decl = self._parse_declaration()
+            if decl is not None:
+                program.declarations.append(decl)
+        return program
+
+    # ── top-level dispatch ────────────────────────────────────────
+
+    def _parse_declaration(self) -> ASTNode | None:
+        """Dispatch to the correct declaration parser based on current token."""
+        tok = self._current()
+
+        match tok.type:
+            case TokenType.IMPORT:
+                return self._parse_import()
+            case TokenType.PERSONA:
+                return self._parse_persona()
+            case TokenType.CONTEXT:
+                return self._parse_context()
+            case TokenType.ANCHOR:
+                return self._parse_anchor()
+            case TokenType.MEMORY:
+                return self._parse_memory()
+            case TokenType.TOOL:
+                return self._parse_tool()
+            case TokenType.TYPE:
+                return self._parse_type()
+            case TokenType.FLOW:
+                return self._parse_flow()
+            case TokenType.INTENT:
+                return self._parse_intent()
+            case TokenType.RUN:
+                return self._parse_run()
+            case _:
+                raise AxonParseError(
+                    f"Unexpected token at top level",
+                    line=tok.line,
+                    column=tok.column,
+                    expected="declaration (persona, context, anchor, flow, run, ...)",
+                    found=tok.value,
+                )
+
+    # ── IMPORT ────────────────────────────────────────────────────
+
+    def _parse_import(self) -> ImportNode:
+        """import axon.anchors.{NoHallucination, NoBias}"""
+        tok = self._consume(TokenType.IMPORT)
+        node = ImportNode(line=tok.line, column=tok.column)
+
+        # module path: IDENTIFIER { . IDENTIFIER }
+        first = self._consume(TokenType.IDENTIFIER)
+        path_parts = [first.value]
+        while self._check(TokenType.DOT):
+            self._advance()  # consume DOT
+            # If the next token is '{', the DOT is a separator before named imports
+            if self._check(TokenType.LBRACE):
+                break
+            part = self._consume(TokenType.IDENTIFIER)
+            path_parts.append(part.value)
+        node.module_path = path_parts
+
+        # optional named imports: { Name1, Name2 }
+        if self._check(TokenType.LBRACE):
+            self._advance()
+            node.names = self._parse_identifier_list()
+            self._consume(TokenType.RBRACE)
+
+        return node
+
+    # ── PERSONA ───────────────────────────────────────────────────
+
+    def _parse_persona(self) -> PersonaDefinition:
+        tok = self._consume(TokenType.PERSONA)
+        name = self._consume(TokenType.IDENTIFIER)
+        node = PersonaDefinition(name=name.value, line=tok.line, column=tok.column)
+        self._consume(TokenType.LBRACE)
+
+        while not self._check(TokenType.RBRACE):
+            field_tok = self._current()
+            field_name = field_tok.value
+            self._advance()
+            self._consume(TokenType.COLON)
+
+            match field_name:
+                case "domain":
+                    node.domain = self._parse_string_list()
+                case "tone":
+                    node.tone = self._consume_any_identifier_or_keyword().value
+                case "confidence_threshold":
+                    node.confidence_threshold = float(self._consume(TokenType.FLOAT).value)
+                case "cite_sources":
+                    node.cite_sources = self._parse_bool()
+                case "refuse_if":
+                    node.refuse_if = self._parse_bracketed_identifiers()
+                case "language":
+                    node.language = self._consume(TokenType.STRING).value
+                case "description":
+                    node.description = self._consume(TokenType.STRING).value
+                case _:
+                    # skip unknown fields gracefully
+                    self._skip_value()
+
+        self._consume(TokenType.RBRACE)
+        return node
+
+    # ── CONTEXT ───────────────────────────────────────────────────
+
+    def _parse_context(self) -> ContextDefinition:
+        tok = self._consume(TokenType.CONTEXT)
+        name = self._consume(TokenType.IDENTIFIER)
+        node = ContextDefinition(name=name.value, line=tok.line, column=tok.column)
+        self._consume(TokenType.LBRACE)
+
+        while not self._check(TokenType.RBRACE):
+            field_tok = self._current()
+            field_name = field_tok.value
+            self._advance()
+            self._consume(TokenType.COLON)
+
+            match field_name:
+                case "memory":
+                    node.memory_scope = self._consume_any_identifier_or_keyword().value
+                case "language":
+                    node.language = self._consume(TokenType.STRING).value
+                case "depth":
+                    node.depth = self._consume_any_identifier_or_keyword().value
+                case "max_tokens":
+                    node.max_tokens = int(self._consume(TokenType.INTEGER).value)
+                case "temperature":
+                    node.temperature = float(self._consume(TokenType.FLOAT).value)
+                case "cite_sources":
+                    node.cite_sources = self._parse_bool()
+                case _:
+                    self._skip_value()
+
+        self._consume(TokenType.RBRACE)
+        return node
+
+    # ── ANCHOR ────────────────────────────────────────────────────
+
+    def _parse_anchor(self) -> AnchorConstraint:
+        tok = self._consume(TokenType.ANCHOR)
+        name = self._consume(TokenType.IDENTIFIER)
+        node = AnchorConstraint(name=name.value, line=tok.line, column=tok.column)
+        self._consume(TokenType.LBRACE)
+
+        while not self._check(TokenType.RBRACE):
+            field_tok = self._current()
+            field_name = field_tok.value
+            self._advance()
+            self._consume(TokenType.COLON)
+
+            match field_name:
+                case "require":
+                    node.require = self._consume_any_identifier_or_keyword().value
+                case "reject":
+                    node.reject = self._parse_bracketed_identifiers()
+                case "enforce":
+                    node.enforce = self._consume_any_identifier_or_keyword().value
+                case "confidence_floor":
+                    node.confidence_floor = float(self._consume(TokenType.FLOAT).value)
+                case "unknown_response":
+                    node.unknown_response = self._consume(TokenType.STRING).value
+                case "on_violation":
+                    action, target = self._parse_violation_action()
+                    node.on_violation = action
+                    node.on_violation_target = target
+                case _:
+                    self._skip_value()
+
+        self._consume(TokenType.RBRACE)
+        return node
+
+    def _parse_violation_action(self) -> tuple[str, str]:
+        """Parse: raise ErrorName | warn | log | escalate | fallback("...")"""
+        tok = self._current()
+        if tok.value == "raise":
+            self._advance()
+            target = self._consume(TokenType.IDENTIFIER)
+            return ("raise", target.value)
+        elif tok.value in ("warn", "log", "escalate"):
+            self._advance()
+            return (tok.value, "")
+        elif tok.value == "fallback":
+            self._advance()
+            self._consume(TokenType.LPAREN)
+            msg = self._consume(TokenType.STRING)
+            self._consume(TokenType.RPAREN)
+            return ("fallback", msg.value)
+        else:
+            self._advance()
+            return (tok.value, "")
+
+    # ── MEMORY ────────────────────────────────────────────────────
+
+    def _parse_memory(self) -> MemoryDefinition:
+        tok = self._consume(TokenType.MEMORY)
+        name = self._consume(TokenType.IDENTIFIER)
+        node = MemoryDefinition(name=name.value, line=tok.line, column=tok.column)
+        self._consume(TokenType.LBRACE)
+
+        while not self._check(TokenType.RBRACE):
+            field_tok = self._current()
+            field_name = field_tok.value
+            self._advance()
+            self._consume(TokenType.COLON)
+
+            match field_name:
+                case "store":
+                    node.store = self._consume_any_identifier_or_keyword().value
+                case "backend":
+                    node.backend = self._consume_any_identifier_or_keyword().value
+                case "retrieval":
+                    node.retrieval = self._consume_any_identifier_or_keyword().value
+                case "decay":
+                    tok_val = self._current()
+                    if tok_val.type == TokenType.DURATION:
+                        node.decay = self._advance().value
+                    else:
+                        node.decay = self._consume_any_identifier_or_keyword().value
+                case _:
+                    self._skip_value()
+
+        self._consume(TokenType.RBRACE)
+        return node
+
+    # ── TOOL ──────────────────────────────────────────────────────
+
+    def _parse_tool(self) -> ToolDefinition:
+        tok = self._consume(TokenType.TOOL)
+        name = self._consume(TokenType.IDENTIFIER)
+        node = ToolDefinition(name=name.value, line=tok.line, column=tok.column)
+        self._consume(TokenType.LBRACE)
+
+        while not self._check(TokenType.RBRACE):
+            field_tok = self._current()
+            field_name = field_tok.value
+            self._advance()
+            self._consume(TokenType.COLON)
+
+            match field_name:
+                case "provider":
+                    node.provider = self._consume_any_identifier_or_keyword().value
+                case "max_results":
+                    node.max_results = int(self._consume(TokenType.INTEGER).value)
+                case "filter":
+                    node.filter_expr = self._parse_filter_expression()
+                case "timeout":
+                    node.timeout = self._consume(TokenType.DURATION).value
+                case "runtime":
+                    node.runtime = self._consume_any_identifier_or_keyword().value
+                case "sandbox":
+                    node.sandbox = self._parse_bool()
+                case _:
+                    self._skip_value()
+
+        self._consume(TokenType.RBRACE)
+        return node
+
+    def _parse_filter_expression(self) -> str:
+        """Parse filter: recent(days: 30) or just an identifier."""
+        tok = self._current()
+        name = self._consume_any_identifier_or_keyword().value
+        if self._check(TokenType.LPAREN):
+            self._advance()
+            parts = [name, "("]
+            while not self._check(TokenType.RPAREN):
+                parts.append(self._advance().value)
+            self._consume(TokenType.RPAREN)
+            parts.append(")")
+            return "".join(parts)
+        return name
+
+    # ── TYPE ──────────────────────────────────────────────────────
+
+    def _parse_type(self) -> TypeDefinition:
+        tok = self._consume(TokenType.TYPE)
+        name = self._consume(TokenType.IDENTIFIER)
+        node = TypeDefinition(name=name.value, line=tok.line, column=tok.column)
+
+        # optional range constraint: (0.0..1.0)
+        if self._check(TokenType.LPAREN):
+            self._advance()
+            min_val = self._consume_number()
+            self._consume(TokenType.DOTDOT)
+            max_val = self._consume_number()
+            self._consume(TokenType.RPAREN)
+            node.range_constraint = RangeConstraint(
+                min_value=min_val, max_value=max_val,
+                line=tok.line, column=tok.column,
+            )
+
+        # optional where clause
+        if self._check(TokenType.WHERE):
+            self._advance()
+            expr_parts: list[str] = []
+            # consume until { or next declaration keyword or EOF
+            while not self._check(TokenType.LBRACE) and not self._at_declaration_start():
+                if self._check(TokenType.EOF):
+                    break
+                expr_parts.append(self._advance().value)
+            node.where_clause = WhereClause(
+                expression=" ".join(expr_parts),
+                line=tok.line,
+                column=tok.column,
+            )
+
+        # optional body: { field: Type, ... }
+        if self._check(TokenType.LBRACE):
+            self._advance()
+            while not self._check(TokenType.RBRACE):
+                field_name = self._consume(TokenType.IDENTIFIER)
+                self._consume(TokenType.COLON)
+                type_expr = self._parse_type_expr()
+                node.fields.append(TypeFieldNode(
+                    name=field_name.value,
+                    type_expr=type_expr,
+                    line=field_name.line,
+                    column=field_name.column,
+                ))
+                # optional comma
+                if self._check(TokenType.COMMA):
+                    self._advance()
+            self._consume(TokenType.RBRACE)
+
+        return node
+
+    def _parse_type_expr(self) -> TypeExprNode:
+        """Parse a type expression: Identifier, List<T>, or Type?"""
+        name_tok = self._consume(TokenType.IDENTIFIER)
+        node = TypeExprNode(name=name_tok.value, line=name_tok.line, column=name_tok.column)
+
+        # generic: List<Party>
+        if self._check(TokenType.LT):
+            self._advance()
+            param = self._consume(TokenType.IDENTIFIER)
+            node.generic_param = param.value
+            self._consume(TokenType.GT)
+
+        # optional: FactualClaim?
+        if self._check(TokenType.QUESTION):
+            self._advance()
+            node.optional = True
+
+        return node
+
+    # ── INTENT ────────────────────────────────────────────────────
+
+    def _parse_intent(self) -> IntentNode:
+        tok = self._consume(TokenType.INTENT)
+        name = self._consume(TokenType.IDENTIFIER)
+        node = IntentNode(name=name.value, line=tok.line, column=tok.column)
+        self._consume(TokenType.LBRACE)
+
+        while not self._check(TokenType.RBRACE):
+            field_tok = self._current()
+            field_name = field_tok.value
+            self._advance()
+            self._consume(TokenType.COLON)
+
+            match field_name:
+                case "given":
+                    node.given = self._consume(TokenType.IDENTIFIER).value
+                case "ask":
+                    node.ask = self._consume(TokenType.STRING).value
+                case "output":
+                    node.output_type = self._parse_type_expr()
+                case "confidence_floor":
+                    node.confidence_floor = float(self._consume(TokenType.FLOAT).value)
+                case _:
+                    self._skip_value()
+
+        self._consume(TokenType.RBRACE)
+        return node
+
+    # ── FLOW ──────────────────────────────────────────────────────
+
+    def _parse_flow(self) -> FlowDefinition:
+        tok = self._consume(TokenType.FLOW)
+        name = self._consume(TokenType.IDENTIFIER)
+        node = FlowDefinition(name=name.value, line=tok.line, column=tok.column)
+
+        # parameters: (param: Type, ...)
+        self._consume(TokenType.LPAREN)
+        if not self._check(TokenType.RPAREN):
+            node.parameters = self._parse_param_list()
+        self._consume(TokenType.RPAREN)
+
+        # optional return type: -> ReturnType
+        if self._check(TokenType.ARROW):
+            self._advance()
+            node.return_type = self._parse_type_expr()
+
+        # body
+        self._consume(TokenType.LBRACE)
+        while not self._check(TokenType.RBRACE):
+            step = self._parse_flow_step()
+            if step is not None:
+                node.body.append(step)
+        self._consume(TokenType.RBRACE)
+
+        return node
+
+    def _parse_param_list(self) -> list[ParameterNode]:
+        params: list[ParameterNode] = []
+        # first param
+        name = self._consume(TokenType.IDENTIFIER)
+        self._consume(TokenType.COLON)
+        type_expr = self._parse_type_expr()
+        params.append(ParameterNode(
+            name=name.value, type_expr=type_expr,
+            line=name.line, column=name.column,
+        ))
+        # additional params
+        while self._check(TokenType.COMMA):
+            self._advance()
+            name = self._consume(TokenType.IDENTIFIER)
+            self._consume(TokenType.COLON)
+            type_expr = self._parse_type_expr()
+            params.append(ParameterNode(
+                name=name.value, type_expr=type_expr,
+                line=name.line, column=name.column,
+            ))
+        return params
+
+    # ── FLOW STEPS ────────────────────────────────────────────────
+
+    def _parse_flow_step(self) -> ASTNode | None:
+        """Dispatch to the correct step parser."""
+        tok = self._current()
+
+        match tok.type:
+            case TokenType.STEP:
+                return self._parse_step()
+            case TokenType.PROBE:
+                return self._parse_probe()
+            case TokenType.REASON:
+                return self._parse_reason()
+            case TokenType.VALIDATE:
+                return self._parse_validate()
+            case TokenType.REFINE:
+                return self._parse_refine()
+            case TokenType.WEAVE:
+                return self._parse_weave()
+            case TokenType.USE:
+                return self._parse_use_tool()
+            case TokenType.REMEMBER:
+                return self._parse_remember()
+            case TokenType.RECALL:
+                return self._parse_recall()
+            case TokenType.IF:
+                return self._parse_if()
+            case _:
+                raise AxonParseError(
+                    "Unexpected token in flow body",
+                    line=tok.line,
+                    column=tok.column,
+                    expected="step, probe, reason, validate, refine, weave, use, remember, recall, if",
+                    found=tok.value,
+                )
+
+    def _parse_step(self) -> StepNode:
+        tok = self._consume(TokenType.STEP)
+        name = self._consume(TokenType.IDENTIFIER)
+        node = StepNode(name=name.value, line=tok.line, column=tok.column)
+        self._consume(TokenType.LBRACE)
+
+        while not self._check(TokenType.RBRACE):
+            inner = self._current()
+
+            match inner.type:
+                case TokenType.GIVEN:
+                    self._advance()
+                    self._consume(TokenType.COLON)
+                    node.given = self._parse_expression_string()
+
+                case TokenType.ASK:
+                    self._advance()
+                    self._consume(TokenType.COLON)
+                    node.ask = self._consume(TokenType.STRING).value
+
+                case TokenType.USE:
+                    node.use_tool = self._parse_use_tool()
+
+                case TokenType.PROBE:
+                    node.probe = self._parse_probe()
+
+                case TokenType.REASON:
+                    node.reason = self._parse_reason()
+
+                case TokenType.WEAVE:
+                    node.weave = self._parse_weave()
+
+                case TokenType.OUTPUT:
+                    self._advance()
+                    self._consume(TokenType.COLON)
+                    node.output_type = self._consume(TokenType.IDENTIFIER).value
+
+                case TokenType.IDENTIFIER if inner.value == "confidence_floor":
+                    self._advance()
+                    self._consume(TokenType.COLON)
+                    node.confidence_floor = float(self._consume(TokenType.FLOAT).value)
+
+                case _:
+                    raise AxonParseError(
+                        "Unexpected token in step body",
+                        line=inner.line,
+                        column=inner.column,
+                        expected="given, ask, use, probe, reason, weave, output, confidence_floor",
+                        found=inner.value,
+                    )
+
+        self._consume(TokenType.RBRACE)
+        return node
+
+    # ── PROBE ─────────────────────────────────────────────────────
+
+    def _parse_probe(self) -> ProbeDirective:
+        tok = self._consume(TokenType.PROBE)
+        target = self._consume(TokenType.IDENTIFIER)
+        self._consume(TokenType.FOR)
+        fields = self._parse_bracketed_identifiers()
+        return ProbeDirective(
+            target=target.value,
+            fields=fields,
+            line=tok.line,
+            column=tok.column,
+        )
+
+    # ── REASON ────────────────────────────────────────────────────
+
+    def _parse_reason(self) -> ReasonChain:
+        tok = self._consume(TokenType.REASON)
+        node = ReasonChain(line=tok.line, column=tok.column)
+
+        # optional: about <Topic>
+        if self._check(TokenType.ABOUT):
+            self._advance()
+            node.about = self._consume(TokenType.IDENTIFIER).value
+        elif self._check(TokenType.IDENTIFIER):
+            node.name = self._current().value
+            self._advance()
+
+        self._consume(TokenType.LBRACE)
+
+        while not self._check(TokenType.RBRACE):
+            field_tok = self._current()
+            field_name = field_tok.value
+            self._advance()
+            self._consume(TokenType.COLON)
+
+            match field_name:
+                case "given":
+                    node.given = self._parse_expression_string()
+                case "about":
+                    node.about = self._consume(TokenType.STRING).value
+                case "ask":
+                    node.ask = self._consume(TokenType.STRING).value
+                case "depth":
+                    node.depth = int(self._consume(TokenType.INTEGER).value)
+                case "show_work":
+                    node.show_work = self._parse_bool()
+                case "chain_of_thought":
+                    node.chain_of_thought = self._parse_bool()
+                case "output":
+                    node.output_type = self._consume(TokenType.IDENTIFIER).value
+                case _:
+                    self._skip_value()
+
+        self._consume(TokenType.RBRACE)
+        return node
+
+    # ── VALIDATE ──────────────────────────────────────────────────
+
+    def _parse_validate(self) -> ValidateGate:
+        tok = self._consume(TokenType.VALIDATE)
+        target = self._parse_dotted_identifier()
+        self._consume(TokenType.AGAINST)
+        schema = self._consume(TokenType.IDENTIFIER)
+        node = ValidateGate(
+            target=target, schema=schema.value,
+            line=tok.line, column=tok.column,
+        )
+        self._consume(TokenType.LBRACE)
+
+        while not self._check(TokenType.RBRACE):
+            rule = self._parse_validate_rule()
+            node.rules.append(rule)
+
+        self._consume(TokenType.RBRACE)
+        return node
+
+    def _parse_validate_rule(self) -> ValidateRule:
+        """Parse: if condition -> action"""
+        tok = self._consume(TokenType.IF)
+        rule = ValidateRule(line=tok.line, column=tok.column)
+
+        # condition: identifier [op value]
+        cond = self._consume_any_identifier_or_keyword()
+        rule.condition = cond.value
+
+        if self._check_comparison():
+            rule.comparison_op = self._advance().value
+            rule.comparison_value = self._advance().value
+
+        self._consume(TokenType.ARROW)
+
+        # action: refine(...) | raise X | warn "..." | pass
+        action_tok = self._current()
+        if action_tok.value == "refine":
+            self._advance()
+            rule.action = "refine"
+            if self._check(TokenType.LPAREN):
+                self._advance()
+                while not self._check(TokenType.RPAREN):
+                    key = self._consume_any_identifier_or_keyword().value
+                    self._consume(TokenType.COLON)
+                    val = self._advance().value
+                    rule.action_params[key] = val
+                    if self._check(TokenType.COMMA):
+                        self._advance()
+                self._consume(TokenType.RPAREN)
+        elif action_tok.value == "raise":
+            self._advance()
+            rule.action = "raise"
+            rule.action_target = self._consume(TokenType.IDENTIFIER).value
+        elif action_tok.value == "warn":
+            self._advance()
+            rule.action = "warn"
+            rule.action_target = self._consume(TokenType.STRING).value
+        elif action_tok.value == "pass":
+            self._advance()
+            rule.action = "pass"
+        else:
+            self._advance()
+            rule.action = action_tok.value
+
+        return rule
+
+    # ── REFINE ────────────────────────────────────────────────────
+
+    def _parse_refine(self) -> RefineBlock:
+        tok = self._consume(TokenType.REFINE)
+        node = RefineBlock(line=tok.line, column=tok.column)
+        self._consume(TokenType.LBRACE)
+
+        while not self._check(TokenType.RBRACE):
+            field_tok = self._current()
+            field_name = field_tok.value
+            self._advance()
+            self._consume(TokenType.COLON)
+
+            match field_name:
+                case "max_attempts":
+                    node.max_attempts = int(self._consume(TokenType.INTEGER).value)
+                case "pass_failure_context":
+                    node.pass_failure_context = self._parse_bool()
+                case "backoff":
+                    node.backoff = self._consume_any_identifier_or_keyword().value
+                case "on_exhaustion":
+                    action, target = self._parse_violation_action()
+                    node.on_exhaustion = action
+                    node.on_exhaustion_target = target
+                case _:
+                    self._skip_value()
+
+        self._consume(TokenType.RBRACE)
+        return node
+
+    # ── WEAVE ─────────────────────────────────────────────────────
+
+    def _parse_weave(self) -> WeaveNode:
+        tok = self._consume(TokenType.WEAVE)
+        sources = self._parse_bracketed_dot_identifiers()
+        self._consume(TokenType.INTO)
+        target = self._consume(TokenType.IDENTIFIER)
+        node = WeaveNode(
+            sources=sources, target=target.value,
+            line=tok.line, column=tok.column,
+        )
+
+        if self._check(TokenType.LBRACE):
+            self._advance()
+            while not self._check(TokenType.RBRACE):
+                field_tok = self._current()
+                field_name = field_tok.value
+                self._advance()
+                self._consume(TokenType.COLON)
+
+                match field_name:
+                    case "format":
+                        node.format_type = self._consume(TokenType.IDENTIFIER).value
+                    case "priority":
+                        node.priority = self._parse_bracketed_identifiers()
+                    case "style":
+                        node.style = self._consume(TokenType.STRING).value
+                    case _:
+                        self._skip_value()
+
+            self._consume(TokenType.RBRACE)
+
+        return node
+
+    # ── USE TOOL ──────────────────────────────────────────────────
+
+    def _parse_use_tool(self) -> UseToolNode:
+        tok = self._consume(TokenType.USE)
+        tool_name = self._consume(TokenType.IDENTIFIER)
+        self._consume(TokenType.LPAREN)
+        arg = ""
+        if self._check(TokenType.STRING):
+            arg = self._consume(TokenType.STRING).value
+        elif not self._check(TokenType.RPAREN):
+            arg = self._consume_any_identifier_or_keyword().value
+        self._consume(TokenType.RPAREN)
+        return UseToolNode(
+            tool_name=tool_name.value, argument=arg,
+            line=tok.line, column=tok.column,
+        )
+
+    # ── REMEMBER / RECALL ─────────────────────────────────────────
+
+    def _parse_remember(self) -> RememberNode:
+        tok = self._consume(TokenType.REMEMBER)
+        self._consume(TokenType.LPAREN)
+        expr = self._consume(TokenType.IDENTIFIER).value
+        self._consume(TokenType.RPAREN)
+        self._consume(TokenType.ARROW)
+        target = self._consume(TokenType.IDENTIFIER).value
+        return RememberNode(
+            expression=expr, memory_target=target,
+            line=tok.line, column=tok.column,
+        )
+
+    def _parse_recall(self) -> RecallNode:
+        tok = self._consume(TokenType.RECALL)
+        self._consume(TokenType.LPAREN)
+        query = ""
+        if self._check(TokenType.STRING):
+            query = self._consume(TokenType.STRING).value
+        else:
+            query = self._consume(TokenType.IDENTIFIER).value
+        self._consume(TokenType.RPAREN)
+        self._consume(TokenType.FROM)
+        source = self._consume(TokenType.IDENTIFIER).value
+        return RecallNode(
+            query=query, memory_source=source,
+            line=tok.line, column=tok.column,
+        )
+
+    # ── IF / CONDITIONAL ──────────────────────────────────────────
+
+    def _parse_if(self) -> ConditionalNode:
+        tok = self._consume(TokenType.IF)
+        node = ConditionalNode(line=tok.line, column=tok.column)
+
+        # condition
+        node.condition = self._consume_any_identifier_or_keyword().value
+        if self._check_comparison():
+            node.comparison_op = self._advance().value
+            node.comparison_value = self._advance().value
+
+        self._consume(TokenType.ARROW)
+        node.then_step = self._parse_flow_step()
+
+        if self._check(TokenType.ELSE):
+            self._advance()
+            self._consume(TokenType.ARROW)
+            node.else_step = self._parse_flow_step()
+
+        return node
+
+    # ── RUN ───────────────────────────────────────────────────────
+
+    def _parse_run(self) -> RunStatement:
+        tok = self._consume(TokenType.RUN)
+        flow_name = self._consume(TokenType.IDENTIFIER)
+        node = RunStatement(flow_name=flow_name.value, line=tok.line, column=tok.column)
+
+        # arguments: (arg1, arg2, ...)
+        self._consume(TokenType.LPAREN)
+        if not self._check(TokenType.RPAREN):
+            node.arguments = self._parse_argument_list()
+        self._consume(TokenType.RPAREN)
+
+        # modifiers
+        while self._check_run_modifier():
+            mod = self._current()
+            match mod.type:
+                case TokenType.AS:
+                    self._advance()
+                    node.persona = self._consume(TokenType.IDENTIFIER).value
+                case TokenType.WITHIN:
+                    self._advance()
+                    node.context = self._consume(TokenType.IDENTIFIER).value
+                case TokenType.CONSTRAINED_BY:
+                    self._advance()
+                    node.anchors = self._parse_bracketed_identifiers()
+                case TokenType.ON_FAILURE:
+                    self._advance()
+                    self._consume(TokenType.COLON)
+                    node.on_failure, node.on_failure_params = self._parse_failure_strategy()
+                case TokenType.OUTPUT_TO:
+                    self._advance()
+                    self._consume(TokenType.COLON)
+                    node.output_to = self._consume(TokenType.STRING).value
+                case TokenType.EFFORT:
+                    self._advance()
+                    self._consume(TokenType.COLON)
+                    node.effort = self._consume_any_identifier_or_keyword().value
+                case _:
+                    break
+
+        return node
+
+    def _parse_failure_strategy(self) -> tuple[str, dict[str, str]]:
+        """Parse: log | retry(backoff: exp) | escalate | raise X"""
+        tok = self._current()
+        params: dict[str, str] = {}
+        if tok.value == "retry":
+            self._advance()
+            if self._check(TokenType.LPAREN):
+                self._advance()
+                while not self._check(TokenType.RPAREN):
+                    key = self._consume_any_identifier_or_keyword().value
+                    self._consume(TokenType.COLON)
+                    val = self._consume_any_identifier_or_keyword().value
+                    params[key] = val
+                    if self._check(TokenType.COMMA):
+                        self._advance()
+                self._consume(TokenType.RPAREN)
+            return ("retry", params)
+        elif tok.value == "raise":
+            self._advance()
+            target = self._consume(TokenType.IDENTIFIER).value
+            return ("raise", {"target": target})
+        else:
+            self._advance()
+            return (tok.value, {})
+
+    # ── HELPER METHODS ────────────────────────────────────────────
+
+    def _current(self) -> Token:
+        if self._pos >= len(self._tokens):
+            return Token(TokenType.EOF, "", 0, 0)
+        return self._tokens[self._pos]
+
+    def _peek_next_token(self) -> Token:
+        if self._pos + 1 >= len(self._tokens):
+            return Token(TokenType.EOF, "", 0, 0)
+        return self._tokens[self._pos + 1]
+
+    def _advance(self) -> Token:
+        tok = self._current()
+        self._pos += 1
+        return tok
+
+    def _check(self, token_type: TokenType) -> bool:
+        return self._current().type == token_type
+
+    def _check_comparison(self) -> bool:
+        return self._current().type in (
+            TokenType.LT, TokenType.GT, TokenType.LTE,
+            TokenType.GTE, TokenType.EQ, TokenType.NEQ,
+        )
+
+    def _check_run_modifier(self) -> bool:
+        return self._current().type in (
+            TokenType.AS, TokenType.WITHIN, TokenType.CONSTRAINED_BY,
+            TokenType.ON_FAILURE, TokenType.OUTPUT_TO, TokenType.EFFORT,
+        )
+
+    def _consume(self, expected: TokenType) -> Token:
+        tok = self._current()
+        if tok.type != expected:
+            raise AxonParseError(
+                f"Unexpected token",
+                line=tok.line,
+                column=tok.column,
+                expected=expected.name,
+                found=f"{tok.type.name}({tok.value!r})",
+            )
+        return self._advance()
+
+    def _consume_any_identifier_or_keyword(self) -> Token:
+        """Consume any identifier or keyword-used-as-value (e.g., tone: precise)."""
+        tok = self._current()
+        # Allow keywords to be used as values in field contexts
+        if tok.type == TokenType.IDENTIFIER or tok.type in (
+            TokenType.BOOL, TokenType.STRING, TokenType.INTEGER, TokenType.FLOAT,
+        ):
+            return self._advance()
+        # Allow any keyword to be used as a value
+        if tok.value.isalpha() or "_" in tok.value:
+            return self._advance()
+        raise AxonParseError(
+            "Expected identifier or keyword value",
+            line=tok.line,
+            column=tok.column,
+            found=f"{tok.type.name}({tok.value!r})",
+        )
+
+    def _consume_number(self) -> float:
+        tok = self._current()
+        if tok.type == TokenType.FLOAT:
+            self._advance()
+            return float(tok.value)
+        elif tok.type == TokenType.INTEGER:
+            self._advance()
+            return float(tok.value)
+        raise AxonParseError(
+            "Expected number",
+            line=tok.line,
+            column=tok.column,
+            found=f"{tok.type.name}({tok.value!r})",
+        )
+
+    def _parse_bool(self) -> bool:
+        tok = self._consume(TokenType.BOOL)
+        return tok.value == "true"
+
+    def _parse_identifier_list(self) -> list[str]:
+        """Parse: Ident1, Ident2, ..."""
+        names: list[str] = []
+        names.append(self._consume(TokenType.IDENTIFIER).value)
+        while self._check(TokenType.COMMA):
+            self._advance()
+            names.append(self._consume(TokenType.IDENTIFIER).value)
+        return names
+
+    def _parse_bracketed_identifiers(self) -> list[str]:
+        """Parse: [Ident1, Ident2, ...]"""
+        self._consume(TokenType.LBRACKET)
+        items = self._parse_extended_identifier_list()
+        self._consume(TokenType.RBRACKET)
+        return items
+
+    def _parse_extended_identifier_list(self) -> list[str]:
+        """Parse a comma-separated list of identifiers, allowing keywords as values."""
+        items: list[str] = []
+        items.append(self._consume_any_identifier_or_keyword().value)
+        while self._check(TokenType.COMMA):
+            self._advance()
+            items.append(self._consume_any_identifier_or_keyword().value)
+        return items
+
+    def _parse_bracketed_dot_identifiers(self) -> list[str]:
+        """Parse: [Extract.output, Assess.output, ...] — allows dotted names."""
+        self._consume(TokenType.LBRACKET)
+        items: list[str] = []
+        items.append(self._parse_dotted_identifier())
+        while self._check(TokenType.COMMA):
+            self._advance()
+            items.append(self._parse_dotted_identifier())
+        self._consume(TokenType.RBRACKET)
+        return items
+
+    def _parse_dotted_identifier(self) -> str:
+        """Parse: Foo or Foo.bar"""
+        parts = [self._consume(TokenType.IDENTIFIER).value]
+        while self._check(TokenType.DOT):
+            self._advance()
+            parts.append(self._consume_any_identifier_or_keyword().value)
+        return ".".join(parts)
+
+    def _parse_string_list(self) -> list[str]:
+        """Parse: ["str1", "str2", ...]"""
+        self._consume(TokenType.LBRACKET)
+        items: list[str] = []
+        items.append(self._consume(TokenType.STRING).value)
+        while self._check(TokenType.COMMA):
+            self._advance()
+            items.append(self._consume(TokenType.STRING).value)
+        self._consume(TokenType.RBRACKET)
+        return items
+
+    def _parse_argument_list(self) -> list[str]:
+        """Parse arguments in a run() call — may be identifiers, strings, or keyword args."""
+        args: list[str] = []
+        while not self._check(TokenType.RPAREN):
+            tok = self._current()
+            if tok.type == TokenType.STRING:
+                args.append(self._advance().value)
+            elif tok.type in (TokenType.INTEGER, TokenType.FLOAT):
+                args.append(self._advance().value)
+            elif tok.type == TokenType.IDENTIFIER:
+                val = self._advance().value
+                # check for dotted: file.pdf
+                if self._check(TokenType.DOT):
+                    self._advance()
+                    val += "." + self._consume_any_identifier_or_keyword().value
+                args.append(val)
+            else:
+                # keyword argument: depth: 3
+                key = self._advance().value
+                if self._check(TokenType.COLON):
+                    self._advance()
+                    val = self._advance().value
+                    args.append(f"{key}:{val}")
+                else:
+                    args.append(key)
+
+            if self._check(TokenType.COMMA):
+                self._advance()
+        return args
+
+    def _parse_expression_string(self) -> str:
+        """Parse an expression — could be identifier, dotted, or bracketed list."""
+        tok = self._current()
+
+        # [Extract.output, Assess.output]
+        if tok.type == TokenType.LBRACKET:
+            items = self._parse_bracketed_dot_identifiers()
+            return "[" + ", ".join(items) + "]"
+
+        # Foo.bar or just Foo
+        return self._parse_dotted_identifier()
+
+    def _skip_value(self) -> None:
+        """Skip a single value token (for unknown fields)."""
+        tok = self._current()
+        if tok.type == TokenType.LBRACKET:
+            self._advance()
+            depth = 1
+            while depth > 0 and not self._check(TokenType.EOF):
+                if self._check(TokenType.LBRACKET):
+                    depth += 1
+                elif self._check(TokenType.RBRACKET):
+                    depth -= 1
+                self._advance()
+        elif tok.type == TokenType.LBRACE:
+            self._advance()
+            depth = 1
+            while depth > 0 and not self._check(TokenType.EOF):
+                if self._check(TokenType.LBRACE):
+                    depth += 1
+                elif self._check(TokenType.RBRACE):
+                    depth -= 1
+                self._advance()
+        else:
+            self._advance()
+
+    def _at_declaration_start(self) -> bool:
+        """Check if current token starts a new top-level declaration."""
+        return self._current().type in (
+            TokenType.PERSONA, TokenType.CONTEXT, TokenType.ANCHOR,
+            TokenType.MEMORY, TokenType.TOOL, TokenType.TYPE,
+            TokenType.FLOW, TokenType.INTENT, TokenType.RUN,
+            TokenType.IMPORT, TokenType.EOF,
+        )

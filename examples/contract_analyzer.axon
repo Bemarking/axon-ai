@@ -1,0 +1,63 @@
+// AXON Example — Contract Analyzer
+// A complete agent that extracts, reasons, and reports on contracts.
+
+persona LegalExpert {
+  domain: ["contract law", "IP", "corporate"]
+  tone: precise
+  confidence_threshold: 0.85
+  cite_sources: true
+}
+
+context LegalReview {
+  memory: session
+  language: "en"
+  depth: exhaustive
+  max_tokens: 4096
+  temperature: 0.3
+}
+
+anchor NoHallucination {
+  require: source_citation
+  confidence_floor: 0.75
+  unknown_response: "I don't have sufficient information."
+  on_violation: raise AnchorBreachError
+}
+
+type RiskScore(0.0..1.0)
+
+type Party {
+  name: FactualClaim,
+  role: FactualClaim
+}
+
+type Risk {
+  score: RiskScore,
+  mitigation: Opinion?
+}
+
+tool WebSearch {
+  provider: brave
+  max_results: 5
+  timeout: 10s
+}
+
+flow AnalyzeContract(doc: Document) -> ContractAnalysis {
+  step Extract {
+    given: doc
+    ask: "Extract all parties, obligations, dates, and penalties"
+    output: EntityMap
+  }
+  step Assess {
+    given: Extract.output
+    ask: "Identify ambiguous or risky clauses"
+    output: RiskAnalysis
+  }
+}
+
+run AnalyzeContract(myContract)
+  as LegalExpert
+  within LegalReview
+  constrained_by [NoHallucination]
+  on_failure: retry(backoff: exponential)
+  output_to: "report.json"
+  effort: high

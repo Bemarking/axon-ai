@@ -1,0 +1,14 @@
+# Include in source distribution
+include LICENSE
+include README.md
+include .env.example
+
+# Include AXON example files
+recursive-include examples *.axon
+
+# Exclude dev-only files
+exclude big-picture.md
+exclude north-star.md
+prune .axon-dev
+prune tests
+prune .venv
