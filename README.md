@@ -12,7 +12,7 @@
   <img src="https://img.shields.io/badge/python-3.12%2B-blue" alt="Python 3.12+">
   <img src="https://img.shields.io/badge/tests-731%20passing-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="License">
-  <img src="https://img.shields.io/pypi/v/axon-ai" alt="PyPI">
+  <img src="https://img.shields.io/pypi/v/axon-lang" alt="PyPI">
 </p>
 
 ---
@@ -162,10 +162,10 @@ axon-constructor/
 
 ```bash
 # From PyPI
-pip install axon-ai
+pip install axon-lang
 
 # With real tool backends (WebSearch, etc.)
-pip install axon-ai[tools]
+pip install axon-lang[tools]
 
 # Verify
 axon version
@@ -178,7 +178,7 @@ git clone https://github.com/bemarking/axon-constructor.git
 cd axon-constructor
 python -m venv .venv
 source .venv/bin/activate  # or .venv\Scripts\activate on Windows
-pip install -e ".[tools,dev]"
+pip install -e ".[tools,dev]"  # editable install
 ```
 
 ### Required API Keys

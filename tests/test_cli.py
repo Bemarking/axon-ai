@@ -47,11 +47,11 @@ class TestVersion:
     def test_version_subcommand(self):
         r = _run("version")
         assert r.returncode == 0
-        assert "axon-ai" in r.stdout
+        assert "axon-lang" in r.stdout
         parts = r.stdout.strip().split()
-        # "axon-ai X.Y.Z"
+        # "axon-lang X.Y.Z"
         assert len(parts) == 2
-        assert parts[0] == "axon-ai"
+        assert parts[0] == "axon-lang"
         # Verify it looks like semver
         major, minor, patch = parts[1].split(".")
         assert major.isdigit() and minor.isdigit() and patch.isdigit()
@@ -59,7 +59,7 @@ class TestVersion:
     def test_version_flag(self):
         r = _run("--version")
         assert r.returncode == 0
-        assert "axon-ai" in r.stdout
+        assert "axon-lang" in r.stdout
 
 
 # ══════════════════════════════════════════════════════════════════

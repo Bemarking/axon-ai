@@ -26,7 +26,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "-V",
         "--version",
         action="version",
-        version=f"axon-ai {axon.__version__}",
+        version=f"axon-lang {axon.__version__}",
     )
 
     sub = parser.add_subparsers(dest="command", help="Available commands")
@@ -106,7 +106,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     # ── axon version ──────────────────────────────────────────
-    sub.add_parser("version", help="Show axon-ai version")
+    sub.add_parser("version", help="Show axon-lang version")
 
     return parser
 

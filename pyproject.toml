@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 # Project metadata
 # ──────────────────────────────────────────────────────────────────
 [project]
-name = "axon-ai"
+name = "axon-lang"
 version = "0.1.0"
 description = "A programming language for AI cognition — compiles to prompts, not machine code."
 readme = "README.md"
@@ -56,14 +56,14 @@ axon = "axon.cli:main"
 # ──────────────────────────────────────────────────────────────────
 # Optional dependencies — install what you need
 #
-#   pip install axon-ai              → compiler + runtime (zero deps)
-#   pip install axon-ai[tools]       → real tool backends (httpx)
-#   pip install axon-ai[anthropic]   → Claude backend
-#   pip install axon-ai[openai]      → GPT backend
-#   pip install axon-ai[gemini]      → Gemini backend
-#   pip install axon-ai[ollama]      → Ollama backend
-#   pip install axon-ai[all]         → everything
-#   pip install axon-ai[dev]         → test + lint + build
+#   pip install axon-lang              → compiler + runtime (zero deps)
+#   pip install axon-lang[tools]       → real tool backends (httpx)
+#   pip install axon-lang[anthropic]   → Claude backend
+#   pip install axon-lang[openai]      → GPT backend
+#   pip install axon-lang[gemini]      → Gemini backend
+#   pip install axon-lang[ollama]      → Ollama backend
+#   pip install axon-lang[all]         → everything
+#   pip install axon-lang[dev]         → test + lint + build
 # ──────────────────────────────────────────────────────────────────
 [project.optional-dependencies]
 tools = [
@@ -82,11 +82,11 @@ ollama = [
     "ollama>=0.4",
 ]
 all = [
-    "axon-ai[tools]",
-    "axon-ai[anthropic]",
-    "axon-ai[openai]",
-    "axon-ai[gemini]",
-    "axon-ai[ollama]",
+    "axon-lang[tools]",
+    "axon-lang[anthropic]",
+    "axon-lang[openai]",
+    "axon-lang[gemini]",
+    "axon-lang[ollama]",
 ]
 dev = [
     "pytest>=8.0",
