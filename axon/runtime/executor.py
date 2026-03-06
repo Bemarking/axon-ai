@@ -513,6 +513,7 @@ class Executor:
                 
             def on_anchor_error(violations: list[str]) -> StepResult:
                 error_msgs = "\n".join(violations)
+                print(f">>> ON ANCHOR ERROR CALLED! Violations: {error_msgs}")
                 raise AnchorBreachError(
                     message=f"L3 Anchor breach detected:\n{error_msgs}",
                     context=ErrorContext(
@@ -551,6 +552,16 @@ class Executor:
         )
         final_step_result = retry_result.result
         
+        if final_step_result is None:
+            # All attempts exhausted and on_exhaustion='skip', so result is None.
+            return StepResult(
+                step_name=step_name,
+                response=None,
+                validation=None,
+                retry_info=retry_result,
+                duration_ms=(time.perf_counter() - step_start) * 1000,
+            )
+
         # Inject retry info back into the returned step result
         return StepResult(
             step_name=final_step_result.step_name,
@@ -805,7 +816,9 @@ class Executor:
 
         for anchor_data in unit.active_anchors:
             anchor_name = anchor_data.get("name")
+            print(f"DEBUG: Processing anchor {anchor_name} against {anchor_map.keys()}")
             if not anchor_name or anchor_name not in anchor_map:
+                print(f"DEBUG: Skipping {anchor_name}")
                 continue
                 
             stdlib_anchor = anchor_map[anchor_name]
@@ -817,6 +830,7 @@ class Executor:
             )
 
             passed, violations = stdlib_anchor.checker_fn(content)
+            print(f"DEBUG: Result of {anchor_name} check: {passed}, {violations}")
 
             tracer.emit(
                 TraceEventType.ANCHOR_PASS if passed
@@ -828,6 +842,7 @@ class Executor:
             if not passed:
                 all_violations.extend(violations)
 
+        print(f"DEBUG: Violations: {all_violations}")
         if all_violations:
             return on_failure(all_violations)
             
@@ -842,24 +857,10 @@ class Executor:
         on_success: Callable[[ValidationResult], Any],
         on_failure: Callable[[list[str]], Any],
     ) -> Any:
-        """Validate a model response against the step's type contract using CPS.
-
-        Uses the SemanticValidator to check the response content
-        against expected types, confidence floors, and structured
-        field requirements from the step's output schema.
-
-        Args:
-            response:   The model response.
-            step:       The compiled step with type expectations.
-            step_name:  The current step name.
-            tracer:     The active tracer.
-            on_success: Continuation to call if validation passes.
-            on_failure: Continuation to call if validation fails.
-
-        Returns:
-            The result of the invoked continuation.
-        """
+        # Debug
+        print(f"DEBUG VAL: output_schema={step.output_schema}, output_type={step.metadata.get('output_type')}")
         if not step.output_schema and not step.metadata.get("output_type"):
+            print("DEBUG VAL: Skipping validation!")
             return on_success(ValidationResult())
 
         output = response.structured or response.content
@@ -867,6 +868,7 @@ class Executor:
         confidence_floor = step.metadata.get("confidence_floor")
         required_fields = step.metadata.get("required_fields")
 
+        print(f"DEBUG VAL: Calling validate with output={type(output)}")
         result = self._validator.validate(
             output=output,
             expected_type=expected_type,
