@@ -31,8 +31,8 @@ from axon.runtime.tools.registry import RuntimeToolRegistry
 
 
 def run(coro: Any) -> Any:
-    """Run an async coroutine synchronously."""
-    return asyncio.get_event_loop().run_until_complete(coro)
+    """Run an async coroutine synchronously (Python 3.12+ safe)."""
+    return asyncio.run(coro)
 
 
 # ═══════════════════════════════════════════════════════════════════

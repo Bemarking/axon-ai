@@ -179,6 +179,28 @@ def _read_multiline(first_line: str) -> str:
 
 # ── Main REPL loop ───────────────────────────────────────────────
 
+def _process_input(line: str) -> bool:
+    """Process a single REPL input line. Returns False to exit."""
+    stripped = line.strip()
+    if not stripped:
+        return True
+
+    # Dot-commands
+    if stripped.startswith("."):
+        return _handle_dot_command(stripped)
+
+    # Multi-line detection
+    if "{" in stripped and stripped.count("{") > stripped.count("}"):
+        source = _read_multiline(stripped)
+        if not source:
+            return True
+    else:
+        source = stripped
+
+    _eval_source(source)
+    return True
+
+
 def cmd_repl(_args: Namespace) -> int:
     """Execute the ``axon repl`` subcommand."""
     # Try to enable readline for input history
@@ -196,24 +218,5 @@ def cmd_repl(_args: Namespace) -> int:
             print(_c("\nGoodbye. 🧠", _DIM))
             return 0
 
-        stripped = line.strip()
-        if not stripped:
-            continue
-
-        # Dot-commands
-        if stripped.startswith("."):
-            if not _handle_dot_command(stripped):
-                return 0
-            continue
-
-        # Multi-line detection
-        if "{" in stripped and stripped.count("{") > stripped.count("}"):
-            source = _read_multiline(stripped)
-            if not source:
-                continue
-        else:
-            source = stripped
-
-        _eval_source(source)
-
-    return 0
+        if not _process_input(line):
+            return 0

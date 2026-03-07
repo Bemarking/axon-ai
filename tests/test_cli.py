@@ -49,12 +49,13 @@ class TestVersion:
         assert r.returncode == 0
         assert "axon-lang" in r.stdout
         parts = r.stdout.strip().split()
-        # "axon-lang X.Y.Z"
+        # "axon-lang X.Y.Z" or "axon-lang X.Y.ZaN" (PEP 440)
         assert len(parts) == 2
         assert parts[0] == "axon-lang"
-        # Verify it looks like semver
-        major, minor, patch = parts[1].split(".")
-        assert major.isdigit() and minor.isdigit() and patch.isdigit()
+        # Verify it looks like a valid PEP 440 version
+        from packaging.version import Version
+        v = Version(parts[1])
+        assert v.major >= 0 and v.minor >= 0
 
     def test_version_flag(self):
         r = _run("--version")

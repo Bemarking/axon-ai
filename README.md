@@ -10,7 +10,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/status-alpha-orange" alt="Status: Alpha">
   <img src="https://img.shields.io/badge/python-3.12%2B-blue" alt="Python 3.12+">
-  <img src="https://img.shields.io/badge/tests-800%20passing-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-822%20passing-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="License">
   <img src="https://img.shields.io/pypi/v/axon-lang" alt="PyPI">
 </p>
@@ -277,7 +277,7 @@ pytest tests/test_tool_stubs.py tests/test_tool_backends.py  # Phase 4: Tools
 ### Current Status
 
 ```
-800 passed, 20 known failures (CLI subprocess + IR edge cases)
+822 passed, 0 failures ✅
 ```
 
 | Phase | Tests | What's covered                              |
@@ -388,8 +388,8 @@ honesty:
 | 2     | IR Generator, Compiler Backends  | ✅ Done        |
 | 3     | Runtime (7 modules)              | ✅ Done        |
 | 4     | Standard Library                 | ✅ Done        |
-| 5     | CLI, REPL, Inspect               | 🔧 In progress |
-| 6     | Test Suite, Hardening, Docs      | ⬜ Planned     |
+| 5     | CLI, REPL, Inspect               | ✅ Done        |
+| 6     | Test Suite, Hardening, Docs      | 🔧 In progress |
 
 ---
 
