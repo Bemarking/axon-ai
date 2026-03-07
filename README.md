@@ -4,15 +4,17 @@
 </p>
 
 <p align="center">
-  <code>persona</code> · <code>intent</code> · <code>flow</code> · <code>reason</code> · <code>anchor</code> · <code>refine</code> · <code>memory</code> · <code>tool</code> · <code>probe</code> · <code>weave</code> · <code>validate</code> · <code>context</code>
+  <code>persona</code> · <code>intent</code> · <code>flow</code> · <code>reason</code> · <code>anchor</code> · <code>refine</code> · <code>memory</code> · <code>tool</code> · <code>probe</code> · <code>weave</code> · <code>validate</code> · <code>context</code><br>
+  <code>know</code> · <code>believe</code> · <code>speculate</code> · <code>doubt</code> · <code>par</code> · <code>hibernate</code>
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/status-alpha-orange" alt="Status: Alpha">
   <img src="https://img.shields.io/badge/python-3.12%2B-blue" alt="Python 3.12+">
-  <img src="https://img.shields.io/badge/tests-822%20passing-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-878%20passing-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/paradigms-3%20shifts-blueviolet" alt="Paradigm Shifts">
   <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="License">
-  <img src="https://img.shields.io/pypi/v/axon-lang" alt="PyPI">
+  <img src="https://img.shields.io/badge/pypi-axon--lang-blue" alt="PyPI">
 </p>
 
 ---
@@ -69,6 +71,200 @@ flow AnalyzeContract(doc: Document) -> StructuredReport {
 
 ---
 
+## Paradigm Shifts
+
+> AXON v0.7 introduces three compiler-level paradigm shifts that elevate the
+> language from prompt compilation to a Cognitive Operating System.
+
+### I. Formal Model — Epistemic Constraint Calculus
+
+Each program `P` in AXON operates over a typed epistemic lattice `(T, ≤)` where
+the compiler enforces semantic constraints at compile time. The paradigm shifts
+extend this with three new formal mechanisms:
+
+**Epistemic Scoping Function.** Given an epistemic mode
+`m ∈ {know, believe,
+speculate, doubt}`, the compiler applies a constraint
+function `C(m)` that maps to a tuple of LLM parameters and auto-injected
+anchors:
+
+```text
+C : Mode → (τ, p, A)
+where
+  τ ∈ [0,1]    — temperature override
+  p ∈ [0,1]    — nucleus sampling (top_p)
+  A ⊆ Anchors  — auto-injected constraint set
+
+C(know)      = (0.1, 0.3, {RequiresCitation, NoHallucination})
+C(believe)   = (0.3, 0.5, {NoHallucination})
+C(speculate) = (0.9, 0.95, ∅)
+C(doubt)     = (0.2, 0.4, {RequiresCitation, SyllogismChecker})
+```
+
+This is calculated **at compile time** — the IR carries the resolved constraint
+set, so the executor applies them as zero-cost runtime overrides.
+
+**Parallel DAG Scheduling.** A `par` block `B = {b₁, ..., bₙ}` where `n ≥ 2` is
+verified at compile time to have no data dependencies between branches:
+
+```text
+∀ bᵢ, bⱼ ∈ B, i ≠ j : deps(bᵢ) ∩ outputs(bⱼ) = ∅
+```
+
+At runtime, branches execute via `asyncio.gather`, achieving `O(max(tᵢ))`
+latency instead of `O(Σtᵢ)` for sequential chains.
+
+**CPS Continuation Points.** A `hibernate` node generates a deterministic
+continuation ID via `SHA-256(flow_name ∥ event_name ∥ source_position)`. The
+executor serializes the full `ExecutionState` (call stack, step results, context
+variables) and halts. On `resume(continuation_id)`, the state is deserialized
+and execution continues from the exact IR node — implementing
+Continuation-Passing Style at the language level.
+
+### II. Design Philosophy — Programming Epistemic States
+
+Traditional LLM frameworks treat every model call identically — the same
+temperature, the same constraints, the same trust level. This is the equivalent
+of asking a human to treat brainstorming and sworn testimony with the same
+cognitive rigor.
+
+AXON rejects this flat model. **Epistemic Directives** make the confidence state
+of the AI a first-class construct in the language:
+
+```axon
+know {
+    flow ExtractFacts(doc: Document) -> CitedFact {
+        step Verify { ask: "Extract only verifiable facts" output: CitedFact }
+    }
+}
+
+speculate {
+    flow Brainstorm(topic: String) -> Opinion {
+        step Imagine { ask: "What could be possible?" output: Opinion }
+    }
+}
+```
+
+The compiler **does not merely label** these blocks — it structurally transforms
+them. A `know` block injects citation anchors and drops temperature to 0.1,
+making hallucination a compile-time constraint violation. A `speculate` block
+removes all constraints and raises temperature to 0.9, liberating the model.
+
+**Parallel Cognitive Dispatch** mirrors how human organizations work: delegate
+independent analyses to specialists concurrently, then synthesize.
+
+**Dynamic State Yielding** transforms agents from expensive `while True` loops
+into event-driven processes that can sleep for days, weeks, or months — then
+resume with full context. The language handles the serialization; the developer
+writes `hibernate until "event_name"` and moves on.
+
+### III. Real-World Use Cases
+
+#### Use Case 1: Legal Document Analysis Pipeline
+
+A law firm needs to analyze contracts with maximum factual rigor, while also
+exploring creative legal strategies. AXON separates these cognitive modes at the
+language level:
+
+```axon
+know {
+    flow ExtractClauses(contract: Document) -> ClauseMap {
+        step Parse { probe contract for [parties, obligations, penalties] output: ClauseMap }
+    }
+}
+
+flow AnalyzeRisk(contract: Document) -> StructuredReport {
+    par {
+        step Financial { ask: "Analyze financial exposure" output: RiskScore }
+        step Regulatory { ask: "Check regulatory compliance" output: ComplianceReport }
+        step Precedent { ask: "Find relevant case law" output: CaseList }
+    }
+    weave [Financial, Regulatory, Precedent] into Report { format: StructuredReport }
+}
+
+speculate {
+    flow ExploreStrategies(report: StructuredReport) -> Opinion {
+        step Creative { ask: "What unconventional strategies could mitigate these risks?" output: Opinion }
+    }
+}
+```
+
+- `know` guarantees citation-backed extraction (temperature 0.1)
+- `par` runs 3 analyses concurrently, reducing latency by ~3x
+- `speculate` explicitly relaxes constraints for creative strategy exploration
+
+#### Use Case 2: Multi-Agent Research & Intelligence System
+
+A BI platform deploys autonomous research agents that run for weeks, hibernating
+between data collection phases:
+
+```axon
+flow MarketIntelligence(sector: String) -> Report {
+    know {
+        flow GatherData(sector: String) -> DataSet {
+            step Collect { ask: "Gather verified market data" output: DataSet }
+        }
+    }
+
+    par {
+        step Trends { ask: "Identify emerging trends" output: TrendAnalysis }
+        step Competitors { ask: "Map competitor landscape" output: CompetitorMap }
+    }
+
+    hibernate until "quarterly_data_available"
+
+    doubt {
+        flow ValidateFindings(data: DataSet) -> ValidatedReport {
+            step CrossCheck { ask: "Challenge every assumption with evidence" output: ValidatedReport }
+        }
+    }
+
+    weave [Trends, Competitors] into Final { format: Report }
+}
+```
+
+- Agent hibernates after initial analysis, **costing $0 while waiting**
+- Resumes automatically when quarterly data arrives (webhook/cron)
+- `doubt` mode forces adversarial validation with syllogism checking
+
+#### Use Case 3: Autonomous Customer Support with Escalation
+
+A SaaS platform handles support tickets with different confidence requirements
+and automatic escalation via hibernate:
+
+```axon
+persona SupportAgent {
+    domain: ["product knowledge", "troubleshooting"]
+    tone: empathetic
+    confidence_threshold: 0.8
+}
+
+flow HandleTicket(ticket: String) -> Resolution {
+    know {
+        flow DiagnoseIssue(ticket: String) -> Diagnosis {
+            step Classify { ask: "Classify the issue type and severity" output: Diagnosis }
+        }
+    }
+
+    believe {
+        flow SuggestSolution(diagnosis: Diagnosis) -> Solution {
+            step Solve { ask: "Propose a solution based on known patterns" output: Solution }
+        }
+    }
+
+    if confidence < 0.7 -> hibernate until "human_review_complete"
+
+    step Respond { ask: "Draft customer response" output: Resolution }
+}
+```
+
+- `know` classifies with strict accuracy (no guessing on severity)
+- `believe` suggests solutions with moderate confidence
+- Low confidence triggers `hibernate` — agent sleeps until a human reviews
+- Zero compute cost during human review; resumes with full context
+
+---
+
 ## Architecture
 
 ```
@@ -85,22 +281,28 @@ flow AnalyzeContract(doc: Document) -> StructuredReport {
                               Typed Output (validated, traced result)
 ```
 
-### 12 Cognitive Primitives
+### 18 Cognitive Primitives
 
-| Primitive | Keyword    | What it represents                     |
-| --------- | ---------- | -------------------------------------- |
-| Persona   | `persona`  | Cognitive identity of the model        |
-| Context   | `context`  | Working memory / session config        |
-| Intent    | `intent`   | Atomic semantic instruction            |
-| Flow      | `flow`     | Composable pipeline of cognitive steps |
-| Reason    | `reason`   | Explicit chain-of-thought              |
-| Anchor    | `anchor`   | Hard constraint (never violable)       |
-| Validate  | `validate` | Semantic validation gate               |
-| Refine    | `refine`   | Adaptive retry with failure context    |
-| Memory    | `memory`   | Persistent semantic storage            |
-| Tool      | `tool`     | External invocable capability          |
-| Probe     | `probe`    | Directed information extraction        |
-| Weave     | `weave`    | Semantic synthesis of multiple outputs |
+| Primitive | Keyword     | What it represents                       |
+| --------- | ----------- | ---------------------------------------- |
+| Persona   | `persona`   | Cognitive identity of the model          |
+| Context   | `context`   | Working memory / session config          |
+| Intent    | `intent`    | Atomic semantic instruction              |
+| Flow      | `flow`      | Composable pipeline of cognitive steps   |
+| Reason    | `reason`    | Explicit chain-of-thought                |
+| Anchor    | `anchor`    | Hard constraint (never violable)         |
+| Validate  | `validate`  | Semantic validation gate                 |
+| Refine    | `refine`    | Adaptive retry with failure context      |
+| Memory    | `memory`    | Persistent semantic storage              |
+| Tool      | `tool`      | External invocable capability            |
+| Probe     | `probe`     | Directed information extraction          |
+| Weave     | `weave`     | Semantic synthesis of multiple outputs   |
+| Know      | `know`      | Epistemic scope — maximum factual rigor  |
+| Believe   | `believe`   | Epistemic scope — moderate confidence    |
+| Speculate | `speculate` | Epistemic scope — creative freedom       |
+| Doubt     | `doubt`     | Epistemic scope — adversarial validation |
+| Par       | `par`       | Parallel cognitive dispatch              |
+| Hibernate | `hibernate` | Dynamic state yielding / CPS checkpoint  |
 
 ### Epistemic Type System (Partial Order Lattice)
 
@@ -161,6 +363,7 @@ axon-constructor/
 │   │   ├── semantic_validator.py # Output type validation
 │   │   ├── retry_engine.py       # Backoff + failure context
 │   │   ├── memory_backend.py     # Abstract + InMemoryBackend
+│   │   ├── state_backend.py      # CPS persistence (hibernate/resume)
 │   │   ├── tracer.py             # 14 event types, JSON trace
 │   │   ├── runtime_errors.py     # 6-level error hierarchy
 │   │   └── tools/
@@ -170,7 +373,7 @@ axon-constructor/
 │   │       ├── stubs/            # 8 tools (6 stubs + 2 real)
 │   │       └── backends/         # 3 production backends
 │   └── stdlib/                   # Built-in personas, flows, anchors
-└── tests/                        # 731 tests
+└── tests/                        # 878 tests
 ```
 
 ---
@@ -277,7 +480,7 @@ pytest tests/test_tool_stubs.py tests/test_tool_backends.py  # Phase 4: Tools
 ### Current Status
 
 ```
-822 passed, 0 failures ✅
+878 passed, 0 failures ✅
 ```
 
 | Phase | Tests | What's covered                              |
@@ -286,6 +489,7 @@ pytest tests/test_tool_stubs.py tests/test_tool_backends.py  # Phase 4: Tools
 | 2     | 164   | IR Generator, Compiler Backends             |
 | 3     | 115   | Executor, Context, Retry, Tracer, Validator |
 | 4     | 88    | Tool infra (53) + Real backends (35)        |
+| 7     | 56    | Paradigm Shifts (epistemic, par, hibernate) |
 | misc  | 281   | Stdlib, integration, edge cases             |
 
 ---
@@ -381,15 +585,17 @@ honesty:
 
 ## Roadmap
 
-| Phase | What                             | Status         |
-| ----- | -------------------------------- | -------------- |
-| 0     | Spec, grammar, type system       | ✅ Done        |
-| 1     | Lexer, Parser, AST, Type Checker | ✅ Done        |
-| 2     | IR Generator, Compiler Backends  | ✅ Done        |
-| 3     | Runtime (7 modules)              | ✅ Done        |
-| 4     | Standard Library                 | ✅ Done        |
-| 5     | CLI, REPL, Inspect               | ✅ Done        |
-| 6     | Test Suite, Hardening, Docs      | 🔧 In progress |
+| Phase | What                                       | Status  |
+| ----- | ------------------------------------------ | ------- |
+| 0     | Spec, grammar, type system                 | ✅ Done |
+| 1     | Lexer, Parser, AST, Type Checker           | ✅ Done |
+| 2     | IR Generator, Compiler Backends            | ✅ Done |
+| 3     | Runtime (7 modules)                        | ✅ Done |
+| 4     | Standard Library                           | ✅ Done |
+| 5     | CLI, REPL, Inspect                         | ✅ Done |
+| 6     | Test Suite, Hardening, Docs                | ✅ Done |
+| 7     | Paradigm Shifts (epistemic/par/hibernate)  | ✅ Done |
+| 8     | Executor integration + production backends | 🔧 Next |
 
 ---
 
@@ -405,14 +611,17 @@ honesty:
 
 ## How it Compares
 
-|                        | LangChain | DSPy    | Guidance | **AXON** |
-| ---------------------- | --------- | ------- | -------- | -------- |
-| Own language + grammar | ❌        | ❌      | ❌       | ✅       |
-| Semantic type system   | ❌        | Partial | ❌       | ✅       |
-| Formal anchors         | ❌        | ❌      | ❌       | ✅       |
-| Persona as type        | ❌        | ❌      | ❌       | ✅       |
-| Reasoning as primitive | ❌        | Partial | ❌       | ✅       |
-| Native multi-model     | Partial   | Partial | ❌       | ✅       |
+|                          | LangChain | DSPy    | Guidance | **AXON** |
+| ------------------------ | --------- | ------- | -------- | -------- |
+| Own language + grammar   | ❌        | ❌      | ❌       | ✅       |
+| Semantic type system     | ❌        | Partial | ❌       | ✅       |
+| Formal anchors           | ❌        | ❌      | ❌       | ✅       |
+| Persona as type          | ❌        | ❌      | ❌       | ✅       |
+| Reasoning as primitive   | ❌        | Partial | ❌       | ✅       |
+| Native multi-model       | Partial   | Partial | ❌       | ✅       |
+| Epistemic directives     | ❌        | ❌      | ❌       | ✅       |
+| Native parallel dispatch | ❌        | ❌      | ❌       | ✅       |
+| State yielding / CPS     | ❌        | ❌      | ❌       | ✅       |
 
 ---
 
