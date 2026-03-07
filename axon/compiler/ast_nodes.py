@@ -458,6 +458,56 @@ class ConditionalNode(ASTNode):
 
 
 # ═══════════════════════════════════════════════════════════════════
+#  PARADIGM SHIFT NODES — epistemic scoping, parallelism, yielding
+# ═══════════════════════════════════════════════════════════════════
+
+@dataclass
+class EpistemicBlock(ASTNode):
+    """
+    know { flow SummarizeEvidence(...) -> HighConfidenceFact }
+    speculate { flow Brainstorm(...) -> Opinion }
+
+    A cognitive scope modifier that injects epistemic constraints and
+    tunes LLM parameters based on the confidence state.
+
+    Modes:
+      know      — strict: low temperature, citation required
+      believe   — moderate: medium temperature, no hallucination
+      speculate — creative: high temperature, relaxed constraints
+      doubt     — analytical: low temperature, syllogistic checks
+    """
+    mode: str = ""           # "know" | "believe" | "speculate" | "doubt"
+    body: list[ASTNode] = field(default_factory=list)
+
+
+@dataclass
+class ParallelBlock(ASTNode):
+    """
+    par {
+        step Financial { ... }
+        step Legal { ... }
+    }
+
+    Concurrent cognitive dispatch — branches run in parallel via
+    asyncio.gather and their results are collected into context.
+    """
+    branches: list[ASTNode] = field(default_factory=list)
+
+
+@dataclass
+class HibernateNode(ASTNode):
+    """
+    hibernate until "amendment_received"
+
+    Suspends execution, serializes the cognitive state (call stack,
+    local variables, IR pointer), and waits for an external event
+    to resume. Creates an immortal agent checkpoint.
+    """
+    event_name: str = ""     # the event to wait for
+    timeout: str = ""        # optional duration before auto-resume
+
+
+# ═══════════════════════════════════════════════════════════════════
 #  EXECUTION NODE
 # ═══════════════════════════════════════════════════════════════════
 

@@ -4,7 +4,7 @@ AXON Compiler — Token Definitions
 Every token the lexer can produce. Derived directly from the AXON EBNF grammar.
 
 Categories:
-  - KEYWORDS: 35 cognitive keywords (persona, context, flow, anchor, …)
+  - KEYWORDS: 42 cognitive keywords (persona, context, flow, anchor, …)
   - LITERALS: STRING, INTEGER, FLOAT, BOOL, DURATION, IDENTIFIER
   - SYMBOLS:  braces, parens, brackets, colon, comma, arrow, range, etc.
   - COMPARISON: <, >, <=, >=, ==, !=
@@ -41,6 +41,17 @@ class TokenType(Enum):
     USE = auto()
     REMEMBER = auto()
     RECALL = auto()
+
+    # ── EPISTEMIC KEYWORDS (cognitive scope modifiers) ─────────────
+    KNOW = auto()
+    BELIEVE = auto()
+    SPECULATE = auto()
+    DOUBT = auto()
+
+    # ── PARALLEL & YIELDING KEYWORDS ──────────────────────────────
+    PAR = auto()
+    CONSOLIDATE = auto()
+    HIBERNATE = auto()
 
     # ── MODIFIERS (run statement modifiers) ───────────────────────
     AS = auto()
@@ -123,6 +134,15 @@ KEYWORDS: dict[str, TokenType] = {
     "use": TokenType.USE,
     "remember": TokenType.REMEMBER,
     "recall": TokenType.RECALL,
+    # Epistemic scope modifiers
+    "know": TokenType.KNOW,
+    "believe": TokenType.BELIEVE,
+    "speculate": TokenType.SPECULATE,
+    "doubt": TokenType.DOUBT,
+    # Parallel & yielding
+    "par": TokenType.PAR,
+    "consolidate": TokenType.CONSOLIDATE,
+    "hibernate": TokenType.HIBERNATE,
     "as": TokenType.AS,
     "within": TokenType.WITHIN,
     "constrained_by": TokenType.CONSTRAINED_BY,

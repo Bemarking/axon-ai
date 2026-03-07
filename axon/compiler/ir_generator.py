@@ -22,6 +22,8 @@ Pipeline position:
 
 from __future__ import annotations
 
+import hashlib
+
 from axon.compiler import ast_nodes as ast
 from axon.compiler.errors import AxonError
 from axon.compiler.ir_nodes import (
@@ -29,11 +31,14 @@ from axon.compiler.ir_nodes import (
     IRConditional,
     IRContext,
     IRDataEdge,
+    IREpistemicBlock,
     IRFlow,
+    IRHibernate,
     IRImport,
     IRIntent,
     IRMemory,
     IRNode,
+    IRParallelBlock,
     IRParameter,
     IRPersona,
     IRProbe,
@@ -146,6 +151,9 @@ class IRGenerator:
         ast.RecallNode: "_visit_recall",
         ast.ConditionalNode: "_visit_conditional",
         ast.RunStatement: "_visit_run",
+        ast.EpistemicBlock: "_visit_epistemic_block",
+        ast.ParallelBlock: "_visit_par_block",
+        ast.HibernateNode: "_visit_hibernate",
     }
 
     def _visit(self, node: ast.ASTNode) -> IRNode:
@@ -617,6 +625,68 @@ class IRGenerator:
             comparison_value=node.comparison_value,
             then_branch=then_branch,
             else_branch=else_branch,
+        )
+
+    # ═══════════════════════════════════════════════════════════════
+    #  PARADIGM SHIFT VISITORS
+    # ═══════════════════════════════════════════════════════════════
+
+    # Epistemic constraint matrix: compile-time calculation of
+    # temperature, top_p, and auto-injected anchors per mode.
+    _EPISTEMIC_CONSTRAINTS: dict[str, dict] = {
+        "know": {
+            "temperature": 0.1,
+            "top_p": 0.3,
+            "anchors": ("RequiresCitation", "NoHallucination"),
+        },
+        "believe": {
+            "temperature": 0.3,
+            "top_p": 0.5,
+            "anchors": ("NoHallucination",),
+        },
+        "speculate": {
+            "temperature": 0.9,
+            "top_p": 0.95,
+            "anchors": (),
+        },
+        "doubt": {
+            "temperature": 0.2,
+            "top_p": 0.4,
+            "anchors": ("RequiresCitation", "SyllogismChecker"),
+        },
+    }
+
+    def _visit_epistemic_block(self, node: ast.EpistemicBlock) -> IREpistemicBlock:
+        constraints = self._EPISTEMIC_CONSTRAINTS.get(node.mode, {})
+        children = tuple(self._visit(child) for child in node.body)
+        return IREpistemicBlock(
+            source_line=node.line,
+            source_column=node.column,
+            mode=node.mode,
+            injected_anchors=constraints.get("anchors", ()),
+            temperature_override=constraints.get("temperature"),
+            top_p_override=constraints.get("top_p"),
+            children=children,
+        )
+
+    def _visit_par_block(self, node: ast.ParallelBlock) -> IRParallelBlock:
+        branches = tuple(self._visit(branch) for branch in node.branches)
+        return IRParallelBlock(
+            source_line=node.line,
+            source_column=node.column,
+            branches=branches,
+        )
+
+    def _visit_hibernate(self, node: ast.HibernateNode) -> IRHibernate:
+        # Generate a deterministic continuation ID from flow context + event
+        seed = f"hibernate:{node.event_name}:{node.line}:{node.column}"
+        continuation_id = hashlib.sha256(seed.encode()).hexdigest()[:16]
+        return IRHibernate(
+            source_line=node.line,
+            source_column=node.column,
+            event_name=node.event_name,
+            timeout=node.timeout,
+            continuation_id=continuation_id,
         )
 
     # ═══════════════════════════════════════════════════════════════

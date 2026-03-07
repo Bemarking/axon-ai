@@ -25,10 +25,13 @@ from .ast_nodes import (
     AnchorConstraint,
     ConditionalNode,
     ContextDefinition,
+    EpistemicBlock,
     FlowDefinition,
+    HibernateNode,
     ImportNode,
     IntentNode,
     MemoryDefinition,
+    ParallelBlock,
     PersonaDefinition,
     ProbeDirective,
     ProgramNode,
@@ -350,6 +353,18 @@ class TypeChecker:
                     pass  # imports are handled separately
                 case RunStatement():
                     pass  # run statements don't declare names
+                case EpistemicBlock():
+                    # Register declarations within the epistemic block
+                    for inner_decl in decl.body:
+                        match inner_decl:
+                            case FlowDefinition(name=name):
+                                ret = inner_decl.return_type.name if inner_decl.return_type else ""
+                                self._register(name, "flow", inner_decl, type_name=ret)
+                            case IntentNode(name=name):
+                                ret = inner_decl.output_type.name if inner_decl.output_type else ""
+                                self._register(name, "intent", inner_decl, type_name=ret)
+                            case _:
+                                pass  # other inner declarations handled recursively
 
     def _register(self, name: str, kind: str, node: ASTNode, type_name: str = "") -> None:
         err = self._symbols.declare(name, kind, node, type_name=type_name)
@@ -380,6 +395,12 @@ class TypeChecker:
                 self._check_run(decl)
             case ImportNode():
                 pass  # module resolution is a later-phase concern
+            case EpistemicBlock():
+                self._check_epistemic_block(decl)
+            case ParallelBlock():
+                self._check_par_block(decl)
+            case HibernateNode():
+                self._check_hibernate(decl)
 
     # ── PERSONA validation ────────────────────────────────────────
 
@@ -545,6 +566,10 @@ class TypeChecker:
                 self._check_remember(step)
             case RecallNode():
                 self._check_recall(step)
+            case ParallelBlock():
+                self._check_par_block(step)
+            case HibernateNode():
+                self._check_hibernate(step)
 
     def _check_step(self, node: StepNode, step_names: set[str], flow_name: str) -> None:
         if node.name in step_names:
@@ -736,6 +761,41 @@ class TypeChecker:
         for t in types[1:]:
             result = EpistemicLattice.join(result, t)
         return result
+
+    # ── EPISTEMIC BLOCK validation ─────────────────────────────────
+
+    _VALID_EPISTEMIC_MODES = frozenset({"know", "believe", "speculate", "doubt"})
+
+    def _check_epistemic_block(self, node: EpistemicBlock) -> None:
+        if node.mode not in self._VALID_EPISTEMIC_MODES:
+            self._emit(
+                f"Invalid epistemic mode '{node.mode}', "
+                f"expected one of: {', '.join(sorted(self._VALID_EPISTEMIC_MODES))}",
+                node,
+            )
+        # Recursively check inner declarations
+        for decl in node.body:
+            self._check_declaration(decl)
+
+    # ── PARALLEL BLOCK validation ─────────────────────────────────
+
+    def _check_par_block(self, node: ParallelBlock) -> None:
+        if len(node.branches) < 2:
+            self._emit(
+                "Parallel block requires at least 2 branches for concurrent dispatch",
+                node,
+            )
+        for branch in node.branches:
+            self._check_declaration(branch)
+
+    # ── HIBERNATE validation ──────────────────────────────────────
+
+    def _check_hibernate(self, node: HibernateNode) -> None:
+        if not node.event_name:
+            self._emit(
+                "hibernate requires an event name: hibernate until \"event_name\"",
+                node,
+            )
 
     # ── HELPERS ────────────────────────────────────────────────────
 

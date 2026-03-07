@@ -16,10 +16,13 @@ from .ast_nodes import (
     AnchorConstraint,
     ConditionalNode,
     ContextDefinition,
+    EpistemicBlock,
     FlowDefinition,
+    HibernateNode,
     ImportNode,
     IntentNode,
     MemoryDefinition,
+    ParallelBlock,
     ParameterNode,
     PersonaDefinition,
     ProbeDirective,
@@ -90,12 +93,14 @@ class Parser:
                 return self._parse_intent()
             case TokenType.RUN:
                 return self._parse_run()
+            case TokenType.KNOW | TokenType.BELIEVE | TokenType.SPECULATE | TokenType.DOUBT:
+                return self._parse_epistemic_block()
             case _:
                 raise AxonParseError(
                     f"Unexpected token at top level",
                     line=tok.line,
                     column=tok.column,
-                    expected="declaration (persona, context, anchor, flow, run, ...)",
+                    expected="declaration (persona, context, anchor, flow, run, know, speculate, ...)",
                     found=tok.value,
                 )
 
@@ -509,12 +514,16 @@ class Parser:
                 return self._parse_recall()
             case TokenType.IF:
                 return self._parse_if()
+            case TokenType.PAR:
+                return self._parse_par_block()
+            case TokenType.HIBERNATE:
+                return self._parse_hibernate()
             case _:
                 raise AxonParseError(
                     "Unexpected token in flow body",
                     line=tok.line,
                     column=tok.column,
-                    expected="step, probe, reason, validate, refine, weave, use, remember, recall, if",
+                    expected="step, probe, reason, validate, refine, weave, use, remember, recall, if, par, hibernate",
                     found=tok.value,
                 )
 
@@ -806,6 +815,67 @@ class Parser:
             query=query, memory_source=source,
             line=tok.line, column=tok.column,
         )
+
+    # ── EPISTEMIC BLOCKS ──────────────────────────────────────────
+
+    def _parse_epistemic_block(self) -> EpistemicBlock:
+        """Parse: know { ... } | believe { ... } | speculate { ... } | doubt { ... }"""
+        tok = self._advance()  # consume the epistemic keyword
+        mode_map = {
+            TokenType.KNOW: "know",
+            TokenType.BELIEVE: "believe",
+            TokenType.SPECULATE: "speculate",
+            TokenType.DOUBT: "doubt",
+        }
+        node = EpistemicBlock(
+            mode=mode_map[tok.type],
+            line=tok.line,
+            column=tok.column,
+        )
+        self._consume(TokenType.LBRACE)
+
+        while not self._check(TokenType.RBRACE):
+            decl = self._parse_declaration()
+            if decl is not None:
+                node.body.append(decl)
+
+        self._consume(TokenType.RBRACE)
+        return node
+
+    # ── PARALLEL BLOCK ────────────────────────────────────────────
+
+    def _parse_par_block(self) -> ParallelBlock:
+        """Parse: par { step A { ... } step B { ... } }"""
+        tok = self._consume(TokenType.PAR)
+        node = ParallelBlock(line=tok.line, column=tok.column)
+        self._consume(TokenType.LBRACE)
+
+        while not self._check(TokenType.RBRACE):
+            branch = self._parse_flow_step()
+            if branch is not None:
+                node.branches.append(branch)
+
+        self._consume(TokenType.RBRACE)
+        return node
+
+    # ── HIBERNATE ─────────────────────────────────────────────────
+
+    def _parse_hibernate(self) -> HibernateNode:
+        """Parse: hibernate until \"event_name\" [timeout 30s]"""
+        tok = self._consume(TokenType.HIBERNATE)
+        node = HibernateNode(line=tok.line, column=tok.column)
+
+        # 'until' is not a keyword — it's an identifier used contextually
+        if self._check(TokenType.IDENTIFIER) and self._current().value == "until":
+            self._advance()
+            node.event_name = self._consume(TokenType.STRING).value
+
+        # optional timeout
+        if self._check(TokenType.IDENTIFIER) and self._current().value == "timeout":
+            self._advance()
+            node.timeout = self._consume(TokenType.DURATION).value
+
+        return node
 
     # ── IF / CONDITIONAL ──────────────────────────────────────────
 

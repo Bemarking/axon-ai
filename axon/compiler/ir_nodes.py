@@ -454,6 +454,62 @@ class IRConditional(IRNode):
 
 
 # ═══════════════════════════════════════════════════════════════════
+#  PARADIGM SHIFT IR NODES — epistemic scoping, parallelism, yielding
+# ═══════════════════════════════════════════════════════════════════
+
+@dataclass(frozen=True)
+class IREpistemicBlock(IRNode):
+    """
+    Compiled epistemic scope — injects constraints and LLM tuning.
+
+    The AXON equivalent of a "purity annotation" in Haskell. The compiler
+    calculates the constraint set at compile time; the executor applies
+    them as runtime overrides.
+
+    Constraint Matrix:
+      know      → temperature=0.1, top_p=0.3, anchors=[RequiresCitation, NoHallucination]
+      believe   → temperature=0.3, top_p=0.5, anchors=[NoHallucination]
+      speculate → temperature=0.9, top_p=0.95, anchors=[]
+      doubt     → temperature=0.2, top_p=0.4, anchors=[RequiresCitation, SyllogismChecker]
+    """
+    node_type: str = "epistemic_block"
+    mode: str = ""                              # "know"|"believe"|"speculate"|"doubt"
+    injected_anchors: tuple[str, ...] = ()      # auto-injected anchor names
+    temperature_override: float | None = None   # LLM temperature
+    top_p_override: float | None = None         # nucleus sampling override
+    children: tuple[IRNode, ...] = ()           # compiled inner declarations
+
+
+@dataclass(frozen=True)
+class IRParallelBlock(IRNode):
+    """
+    Compiled parallel dispatch — branches run via asyncio.gather.
+
+    At compile time, the IRGenerator verifies no data dependencies
+    between branches. At runtime, the executor fires them concurrently
+    and collects results into `context[branch.step_name]`.
+    """
+    node_type: str = "parallel_block"
+    branches: tuple[IRNode, ...] = ()           # independent step subtrees
+    consolidation: str = ""                     # optional consolidation strategy
+
+
+@dataclass(frozen=True)
+class IRHibernate(IRNode):
+    """
+    Compiled hibernate checkpoint — CPS serialization point.
+
+    The continuation_id is compiler-generated (hash of flow_name + step_index)
+    so that resume() is deterministic. The executor serializes the full
+    ExecutionState and halts; resume() deserializes and continues.
+    """
+    node_type: str = "hibernate"
+    event_name: str = ""                        # event to wait for
+    timeout: str = ""                           # optional duration
+    continuation_id: str = ""                   # compiler-generated unique ID
+
+
+# ═══════════════════════════════════════════════════════════════════
 #  EXECUTION IR NODE — the complete wiring
 # ═══════════════════════════════════════════════════════════════════
 
